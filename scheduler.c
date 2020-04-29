@@ -91,16 +91,13 @@ int scheduling(struct process *proc, int nproc, int policy)
 	ntime = 0;
 	running = -1;
 	finish_cnt = 0;
-	
+	setvbuf(stdout, NULL, _IONBF, 0);
 	while(1) {
 		//fprintf(stderr, "Current time: %d\n", ntime);
 
 		/* Check if running process finish */
 		if (running != -1 && proc[running].t_exec == 0) {
 		
-#ifdef DEBUG
-			fprintf(stderr, "%s finish at time %d.\n", proc[running].name, ntime);
-#endif
 			//kill(running, SIGKILL);
 			waitpid(proc[running].pid, NULL, 0);
 			printf("%s %d\n", proc[running].name, proc[running].pid);
@@ -117,9 +114,6 @@ int scheduling(struct process *proc, int nproc, int policy)
 			if (proc[i].t_ready == ntime) {
 				proc[i].pid = proc_exec(proc[i]);
 				proc_block(proc[i].pid);
-#ifdef DEBUG
-				fprintf(stderr, "%s ready at time %d.\n", proc[i].name, ntime);
-#endif
 			}
 
 		}

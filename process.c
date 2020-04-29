@@ -48,10 +48,6 @@ int proc_exec(struct process proc)
 		syscall(GET_TIME, &ts_start);
 		for (int i = 0; i < proc.t_exec; i++) {
 			UNIT_T();
-#ifdef DEBUG
-			if (i % 100 == 0)
-				fprintf(stderr, "%s: %d/%d\n", proc.name, i, proc.t_exec);
-#endif
 		}
 		//syscall(GET_TIME, &end_sec, &end_nsec);
 		syscall(GET_TIME, &ts_end);
