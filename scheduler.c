@@ -1,137 +1,146 @@
 #define _GNU_SOURCE
 #include "process.h"
 #include "scheduler.h"
-#include<signal.h>
-#include<stdlib.h>
-#include<stdio.h>
-#include<sched.h>
-#include<sys/wait.h>
-#include<unistd.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <sched.h>
 
-static int lastcs; //last context switch time for RR
-static int current_unit; //current unit time
-static int idofrp; //id of running process. -1 if no process running
-static int finish; //the number of finish process
+/* Last context switch time for RR scheduling */
+static int t_last;
 
-int comp(const void *a, const void *b){
-	return ((struct process *)a)->R - ((struct process *)b)->R;
+/* Current unit time */
+static int ntime;
+
+/* Index of running process. -1 if no process running */
+static int running;
+
+/* Number of finish Process */
+static int finish_cnt;
+
+/* Sort processes by ready time */
+int cmp(const void *a, const void *b) {
+	return ((struct process *)a)->t_ready - ((struct process *)b)->t_ready;
 }
 
-int next_process(struct process *proc, int number, int policy){
-	if(idofrp != -1 && (policy == FIFO || policy == SJF))
-		return idofrp;
+/* Return index of next process  */
+int next_process(struct process *proc, int nproc, int policy)
+{
+	/* Non-preemptive */
+	if (running != -1 && (policy == SJF || policy == FIFO))
+		return running;
 
-	int now = -1;
+	int ret = -1;
+
 	if (policy == PSJF || policy ==  SJF) {
-		for (int i = 0; i < number; i++) {
-			if (proc[i].pid == -1 || proc[i].T == 0)
+		for (int i = 0; i < nproc; i++) {
+			if (proc[i].pid == -1 || proc[i].t_exec == 0)
 				continue;
-			if (now == -1 || proc[i].T < proc[now].T)
-				now = i;
+			if (ret == -1 || proc[i].t_exec < proc[ret].t_exec)
+				ret = i;
 		}
 	}
-	else if(policy == FIFO){
-		for(int i=0; i<number; i++){
-			if(proc[i].pid == -1 || proc[i].T ==0)
+
+	else if (policy == FIFO) {
+		for(int i = 0; i < nproc; i++) {
+			if(proc[i].pid == -1 || proc[i].t_exec == 0)
 				continue;
-			if(now == -1 || proc[i].R < proc[now].R)
-				now = i;
+			if(ret == -1 || proc[i].t_ready < proc[ret].t_ready)
+				ret = i;
 		}
-	}
-	else if (policy == RR){
-		if(idofrp == -1){
-			for(int i=0; i<number; i++){
-				if(proc[i].pid != -1 && proc[i].T > 0){
-					now = i;
+        }
+
+	else if (policy == RR) {
+		if (running == -1) {
+			for (int i = 0; i < nproc; i++) {
+				if (proc[i].pid != -1 && proc[i].t_exec > 0){
+					ret = i;
 					break;
 				}
 			}
 		}
-		else if((current_unit - lastcs) % 500 == 0){
-			now = (idofrp + 1) % number;
-			while(proc[now].pid == -1 || proc[now].T == 0)
-				now = (now + 1) % number;
+		else if ((ntime - t_last) % 500 == 0)  {
+			ret = (running + 1) % nproc;
+			while (proc[ret].pid == -1 || proc[ret].t_exec == 0)
+				ret = (ret + 1) % nproc;
 		}
 		else
-			now = idofrp;
+			ret = running;
 	}
-	return now;
+
+	return ret;
 }
 
-int scheduling(struct process *proc, int number, int policy)
+int scheduling(struct process *proc, int nproc, int policy)
 {
-	qsort(proc, number, sizeof(struct process), comp);
-	//由ready time 小的先開始做
-
-
+	qsort(proc, nproc, sizeof(struct process), cmp);
 
 	/* Initial pid = -1 imply not ready */
-	for (int i = 0; i < number; i++)
+	for (int i = 0; i < nproc; i++)
 		proc[i].pid = -1;
 
 	/* Set single core prevent from preemption */
-	proc_assign_cpu(getpid(), PARENT_CORE);
-
+	proc_assign_cpu(getpid(), PARENT_CPU);
+	
 	/* Set high priority to scheduler */
-	commence(getpid());
-
+	proc_wakeup(getpid());
+	
 	/* Initial scheduler */
-	current_unit = 0;
-	idofrp = -1;
-	finish = 0;
-
+	ntime = 0;
+	running = -1;
+	finish_cnt = 0;
+	
 	while(1) {
 		//fprintf(stderr, "Current time: %d\n", ntime);
 
 		/* Check if running process finish */
-		if (idofrp != -1 && proc[idofrp].T == 0) {
-
+		if (running != -1 && proc[running].t_exec == 0) {
+		
 #ifdef DEBUG
-//			fprintf(stderr, "%s finish at time %d.\n", proc[idofrp].name, current_unit);
+			fprintf(stderr, "%s finish at time %d.\n", proc[running].name, ntime);
 #endif
-			//kill(idofrp, SIGKILL);
-			waitpid(proc[idofrp].pid, NULL, 0);
-			
-			setvbuf(stdout, NULL, _IONBF, 0);
-			printf("%s %d\n", proc[idofrp].name, proc[idofrp].pid);
-			idofrp = -1;
-			finish++;
+			//kill(running, SIGKILL);
+			waitpid(proc[running].pid, NULL, 0);
+			printf("%s %d\n", proc[running].name, proc[running].pid);
+			running = -1;
+			finish_cnt++;
 
-			/* 所有process都完成了結束while*/
-			if (finish == number)
+			/* All process finish */
+			if (finish_cnt == nproc)
 				break;
-			
 		}
 
 		/* Check if process ready and execute */
-		for (int i = 0; i < number; i++) {
-			if (proc[i].R == current_unit) {
+		for (int i = 0; i < nproc; i++) {
+			if (proc[i].t_ready == ntime) {
 				proc[i].pid = proc_exec(proc[i]);
-				Pause(proc[i].pid);
+				proc_block(proc[i].pid);
 #ifdef DEBUG
-//				fprintf(stderr, "%s ready at time %d.\n", proc[i].name, current_unit);
+				fprintf(stderr, "%s ready at time %d.\n", proc[i].name, ntime);
 #endif
 			}
 
 		}
 
 		/* Select next running  process */
-		int next = next_process(proc, number, policy);
+		int next = next_process(proc, nproc, policy);
 		if (next != -1) {
 			/* Context switch */
-			if (idofrp != next) {
-				commence(proc[next].pid);
-				Pause(proc[idofrp].pid);
-				idofrp = next;
-				lastcs =current_unit;
+			if (running != next) {
+				proc_wakeup(proc[next].pid);
+				proc_block(proc[running].pid);
+				running = next;
+				t_last = ntime;
 			}
 		}
 
 		/* Run an unit of time */
 		UNIT_T();
-		if (idofrp != -1)
-			proc[idofrp].T--;
-		current_unit++;
+		if (running != -1)
+			proc[running].t_exec--;
+		ntime++;
 	}
 
 	return 0;

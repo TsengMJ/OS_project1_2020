@@ -1,31 +1,35 @@
-#ifndef PROCESS_H
-#define PROCESS_H
+#ifndef _PROCESS_H_
+#define _PROCESS_H_
 
 #include <sys/types.h>
 
-#define PARENT_CORE 0
-#define CHILD_CORE 1
+#define CHILD_CPU 1
+#define PARENT_CPU 0
 
-//Unit time.
-#define UNIT_T() 									\
-{													\
-	for( volatile long i = 0; i < 1000000UL; i++ );	\
-}													\
+/* Running one unit time */
+#define UNIT_T()				\
+{						\
+	volatile unsigned long i;		\
+	for (i = 0; i < 1000000UL; i++);	\
+}						\
 
-//Process structure.
 struct process {
-	char name[33];
+	char name[32];
+	int t_ready;
+	int t_exec;
 	pid_t pid;
-	int R;
-	int T;
 };
 
-//Assign process to a particular cpu.
-int proc_assign_cpu( int pid, int cpu );
-//Execute the process.
-int proc_exec( struct process proc );
+/* Assign process to specific core */
+int proc_assign_cpu(int pid, int core);
 
-int commence(int pid);
-int Pause(int pid);
+/* Execute the process and return pid */
+int proc_exec(struct process proc);
+
+/* Set very low priority tp process */
+int proc_block(int pid);
+
+/* Set high priority to process */
+int proc_wakeup(int pid);
 
 #endif
